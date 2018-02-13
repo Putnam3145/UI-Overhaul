@@ -13,19 +13,80 @@ local guidm = require('gui.dwarfmode')
 local widgets = require('gui.widgets')
 local dlg = require('gui.dialogs')
 
+local Button=defclass(Button,widgets.Widget)
+
+Button.ATTRS={
+    on_click = DEFAULT_NIL,
+    graphic = DEFAULT_NIL, --refers to the name of a tilepage
+    label = DEFAULT_NIL
+}
+
+function Button:preUpdateLayout()
+    self.frame=self.frame or {}
+    if not self.page then self.frame.w=0 self.frame.h=0 return end
+    self.frame.w=self.page.page_dim_x
+    self.frame.h=self.page.page_dim_y
+    self.layoutUpdated=true
+end
+
+function Button:onRenderBody(dc)
+    if not self.page then return end
+    for k,v in ipairs(self.page.texpos) do
+        dc:seek(k%self.frame.w,math.floor(k/self.frame.h)):tile(32,v)
+    end
+end
+
+function Button:onInput(keys)
+    if keys._MOUSE_L_DOWN and self:getMousePos() and self.on_click then
+        self.on_click()
+    end
+end
+
+function Button:init(args)
+    if not self.graphic then return end
+    for k,v in ipairs(df.global.texture.page) do
+        if v.token==self.graphic then self.page=v return end
+    end
+    error('No tilepage found: '..self.graphic)
+end
+
 local OverhaulUI=defclass(OverhaulUI,guidm.MenuOverlay)
 
-local function round(num)
-    return math.floor(num+0.5)
+local function recursiveLabelFind(scr)
+    if scr:getMousePos() and scr.label then return scr.label end
+    for _,child in pairs(scr.subviews) do
+        local label=recursiveLabelFind(child)
+        if label then return label end
+    end
+end
+
+function OverhaulUI:renderSubviews(dc)
+    local highlighted=false
+    for _,child in pairs(self.subviews) do
+        local label=recursiveLabelFind(child)
+        if label then
+            self.subviews.highlight_label:setText(recursiveLabelFind(child)) 
+            highlighted=true 
+        end
+        if child.visible then
+            child:render(dc)
+        end
+    end
+    if not highlighted then self.subviews.highlight_label:setText('') end
 end
 
 function OverhaulUI:onRender()
     self._native.parent:render()
+    self:renderSubviews(gui.Painter{})
 end
+
+allowedViewscreens={}
+
+allowedViewscreens[df.viewscreen_dwarfmodest]=true
 
 function OverhaulUI:onIdle()
     self._native.parent:logic()
-    if dfhack.gui.getFocusString(self._native.parent)~="dwarfmode/Default" then
+    if not allowedViewscreens[self._native.parent._type] then
         self:dismiss()
     end
 end
@@ -59,12 +120,17 @@ function OverhaulUI:onInput(keys)
     if keys._MOUSE_R_DOWN then
         df.global.enabler.mouse_rbut_down=1
     end
+    if keys.LEAVESCREEN then
+        self:setSelected('main_ui')
+        df.global.ui.main.mode=df.ui_sidebar_mode.Default
+        self.allow_options=true
+    end
     for code,_ in pairs(keys) do
-        print(code)
-        if allowedKeys[code] then
+        if self.allowKeyPresses or allowedKeys[code] then
             self:sendInputToParent(code)
         end
     end
+    self:inputToSubviews(keys)
     df.global.enabler.mouse_lbut=0
     df.global.enabler.mouse_lbut_down=0
     df.global.enabler.mouse_rbut=0
@@ -72,19 +138,178 @@ function OverhaulUI:onInput(keys)
 end
 
 function OverhaulUI:onAboutToShow(parent)
+    df.global.ui_area_map_width=3
+end
+
+local function saveAndQuit()
+    dfhack.run_command('quicksave')
+    dfhack.run_command('nopause 1')
+    dfhack.timeout(2,'ticks',function() dfhack.run_command('die') end)
+end
+
+function OverhaulUI:setSelected(view_id)
+    local idx = utils.linear_index(self.subviews.pages.subviews, self.subviews[view_id])
+    if not idx then
+        error('Unknown page: '..view_id)
+    end
+    self.subviews.pages:setSelected(idx)
+    self.allow_options=false
+end
+
+function OverhaulUI:init(args)
     self.allow_options=true
+    self.view_id='overhaul_ui'
+    self:addviews{
+        widgets.Panel{
+            frame={t=0,l=0,h=20,r=0},
+            on_render=function(dc)
+                dc:clear()
+            end,
+        },
+        widgets.Pages{
+            view_id='pages',
+            subviews={
+            widgets.Panel{
+                view_id='main_ui',
+                subviews={
+                Button{
+                    --Some designations, farm plots.
+                    graphic="LANDSCAPE_BUTTON",
+                    label="Manipulate the land in various ways.",
+                    on_click=function()
+                        self:setSelected('landscaping')
+                    end,
+                    frame={t=1,l=1}
+                },
+                Button{
+                    --Basically the whole building menu excepting workshops and furnaces.
+                    graphic="CONSTRUCTION_BUTTON",
+                    label="Construct walls, furniture and similar.",
+                    on_click=function()
+                        self:setSelected('construction')                    
+                    end,
+                    frame={t=1,l=10}
+                },
+                Button{
+                    --Reports, unit list, military, squads, burrows, nobles.
+                    graphic="UNIT_BUTTON",
+                    label="Manage your "..df.creature_raw.find(df.global.ui.race_id).name[1]..", their pets, and other citizens.",
+                    on_click=function()
+                        self:setSelected('units')
+                    end,
+                    frame={t=1,l=19}
+                },
+                Button{
+                    --Orders, some designations, job list, burrows (again), zones, rooms/buildings, workshops, furnaces, job manager.
+                    graphic="JOB_BUTTON",
+                    label="Manage "..df.creature_raw.find(df.global.ui.race_id).name[2].." labors.",
+                    on_click=function()
+                        self:setSelected('jobs')
+                    end,
+                    frame={t=10,l=1}
+                },
+                Button{
+                    --Some designations, hauling, stock screens, artifacts, stockpiles.
+                    graphic="ITEM_BUTTON",
+                    label="Manage your fortress's items.",
+                    on_click=function()
+                        self:setSelected('items')
+                    end,
+                    frame={t=10,l=10}
+                },
+                Button{
+                    --Status, locations, civilization/world info, depot access, points/routes/notes, announcements
+                    graphic="WORLD_BUTTON",
+                    label="Manage the fortress and its environs.",
+                    on_click=function()
+                        self:setSelected('world')
+                    end,
+                    frame={t=10,l=19}
+                },
+            }
+            },
+
+            widgets.Panel{
+                view_id='landscaping',
+                frame={b=50,r=43}, --do you like magic numbers? me neither
+                subviews={
+                Button{
+                    graphic="LANDSCAPE_BUTTON",
+                    label="Mining",
+                    on_click=function()
+                        df.global.ui.main.mode=df.ui_sidebar_mode.DesignateMine
+                        self.subviews.landscaping_label:setText("Currently: Mining")
+                    end
+                },
+                widgets.Label{
+                    frame={b=3,l=1},
+                    view_id='landscaping_label',
+                    text=' '
+                }
+                }
+            },
+            widgets.Panel{
+                view_id='construction',
+                subviews={
+                
+                }
+            },
+            widgets.Panel{
+                view_id='units',
+                subviews={
+                
+                }
+            },
+            widgets.Panel{
+                view_id='jobs',
+                subviews={
+                
+                }
+            },
+            widgets.Panel{
+                view_id='items',
+                subviews={
+                
+                }
+            },
+            widgets.Panel{
+                view_id='world',
+                subviews={
+                
+                }
+            },
+
+            }
+        },
+        widgets.Label{
+            frame={b=2,l=1},
+            view_id='highlight_label',
+            text=' '
+        },
+        Button{
+            graphic="SAVE_BUTTON",
+            label="Save and quit the game.",
+            on_click=function()
+                dlg.showYesNoPrompt("Dwarf Fortress","Are you sure you want to quit the game?",COLOR_WHITE,saveAndQuit)
+            end,
+            frame={t=1,r=1}
+        },
+        Button{
+            
+        }
+    }
 end
 
 viewscreenActions={}
 
-viewscreenActions["dwarfmode/Default"]=function()
+viewscreenActions[df.viewscreen_dwarfmodest]=function()
     local overhaul=OverhaulUI{}
     overhaul:show()
 end
 
 
 local function checkViewscreen()
-    local viewfunc=viewscreenActions[dfhack.gui.getCurFocus]
+    local viewfunc=viewscreenActions[dfhack.gui.getCurViewscreen()._type]
     if viewfunc then viewfunc() end
 end
 
