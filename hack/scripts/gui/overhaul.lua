@@ -53,6 +53,7 @@ end
 local OverhaulUI=defclass(OverhaulUI,guidm.MenuOverlay)
 
 local function recursiveLabelFind(scr)
+    if not scr.visible then return false end
     if scr:getMousePos() and scr.label then return scr.label end
     for _,child in pairs(scr.subviews) do
         local label=recursiveLabelFind(child)
@@ -156,6 +157,17 @@ function OverhaulUI:setSelected(view_id)
     self.allow_options=false
 end
 
+function OverhaulUI:preUpdateLayout()
+    local frame={b=df.global.gps.dimy-13,r=43,w=43}
+    self.subviews.landscaping.frame=frame
+    self.subviews.construction.frame=frame
+    self.subviews.units.frame=frame
+    self.subviews.jobs.frame=frame
+    self.subviews.items.frame=frame
+    self.subviews.world.frame=frame
+    self.subviews.highlight_label.frame={b=1,l=1}
+end
+
 function OverhaulUI:init(args)
     self.allow_options=true
     self.view_id='overhaul_ui'
@@ -231,7 +243,6 @@ function OverhaulUI:init(args)
 
             widgets.Panel{
                 view_id='landscaping',
-                frame={b=50,r=43}, --do you like magic numbers? me neither
                 subviews={
                 Button{
                     graphic="LANDSCAPE_BUTTON",
@@ -242,7 +253,8 @@ function OverhaulUI:init(args)
                     end
                 },
                 widgets.Label{
-                    frame={b=3,l=1},
+                    frame={b=1,l=1},
+
                     view_id='landscaping_label',
                     text=' '
                 }
@@ -251,7 +263,14 @@ function OverhaulUI:init(args)
             widgets.Panel{
                 view_id='construction',
                 subviews={
-                
+                    Button{
+                        graphic="LANDSCAPE_BUTTON",
+                        label="Wall",
+                        on_click=function()
+                            df.global.ui.main.mode=df.ui_sidebar_mode.DesignateMine
+                            self.subviews.landscaping_label:setText("Currently: Mining")
+                        end
+                    },
                 }
             },
             widgets.Panel{
@@ -282,7 +301,6 @@ function OverhaulUI:init(args)
             }
         },
         widgets.Label{
-            frame={b=2,l=1},
             view_id='highlight_label',
             text=' '
         },
